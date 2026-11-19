@@ -35,11 +35,10 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
+COPY --from=build --chown=node:node /app/src/generated ./src/generated
 COPY --chown=node:node start.sh ./start.sh
 RUN chmod +x ./start.sh
 USER node
-EXPOSE 4000
-HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:4000/api/health > /dev/null || exit 1
+EXPOSE 10000 4000
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["./start.sh"]

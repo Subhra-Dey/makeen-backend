@@ -29,7 +29,9 @@ async function bootstrap(): Promise<void> {
     forceExit('SIGINT');
   });
 
-  await app.listen(env.API_PORT, env.API_HOST);
+  const port = Number(process.env.PORT) || env.API_PORT || 10000;
+  await app.listen(port, '0.0.0.0');
+  console.log(`[MAKEEN API] Server successfully started and listening on http://0.0.0.0:${port}`);
 }
 
 bootstrap().catch((err: unknown) => {
