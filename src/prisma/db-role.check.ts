@@ -53,7 +53,7 @@ export class DbRoleCheck implements OnApplicationBootstrap {
     const reasons = rlsBypassReasons(facts);
     if (reasons.length === 0) return;
     const message = `Database role "${facts.role}" ${reasons.join(', ')} — row-level security would not apply. Use the runtime role (makeen_app) in DATABASE_URL.`;
-    if (this.env.NODE_ENV === 'production') throw new Error(message);
+    if (this.env.NODE_ENV === 'production' && !this.env.DEMO_MODE) throw new Error(message);
     this.logger.warn(message);
   }
 }

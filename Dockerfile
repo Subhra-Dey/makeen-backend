@@ -35,7 +35,8 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/prisma.config.ts ./prisma.config.ts
-COPY --from=build --chown=node:node /app/src/generated ./src/generated
+COPY --from=build --chown=node:node /app/src ./src
+COPY --from=build --chown=node:node /app/tsconfig.json ./tsconfig.json
 COPY --chown=node:node start.sh ./start.sh
 RUN chmod +x ./start.sh
 USER node
