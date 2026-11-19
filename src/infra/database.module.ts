@@ -13,15 +13,19 @@ export const DB_POOL = Symbol('DB_POOL');
     {
       provide: DB_POOL,
       inject: [ENV],
-      useFactory: (env: Env): pg.Pool =>
-        new pg.Pool({
+      useFactory: (env: Env): pg.Pool => {
+        const isLocal =
+          env.DATABASE_URL.includes('localhost') || env.DATABASE_URL.includes('127.0.0.1');
+        return new pg.Pool({
           connectionString: env.DATABASE_URL,
           max: 10,
           idleTimeoutMillis: 30_000,
           connectionTimeoutMillis: env.READINESS_TIMEOUT_MS,
           application_name: 'makeen-api',
           options: PG_SESSION_OPTIONS,
-        }),
+          ssl: isLocal ? undefined : { rejectUnauthorized: false },
+        });
+      },
     },
   ],
   exports: [DB_POOL],
