@@ -1,0 +1,30 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommits", ":pinAllExceptPeerDependencies"],
+  "timezone": "Asia/Kolkata",
+  "schedule": ["before 7am on monday"],
+  "minimumReleaseAge": "14 days",
+  "vulnerabilityAlerts": { "enabled": true, "minimumReleaseAge": null },
+  "semanticCommitScope": "api",
+  "packageRules": [
+    { "matchUpdateTypes": ["major"], "dependencyDashboardApproval": true },
+    {
+      "description": "Stay on NestJS 11 (the installed CLI); a move to 12 is a planned upgrade.",
+      "matchPackageNames": [
+        "@nestjs/core",
+        "@nestjs/common",
+        "@nestjs/platform-express",
+        "@nestjs/testing",
+        "@nestjs/cli",
+        "@nestjs/swagger",
+        "@nestjs/schematics"
+      ],
+      "allowedVersions": "<12",
+      "groupName": "nestjs"
+    },
+    { "matchPackageNames": ["@nestjs/config"], "allowedVersions": "<5" },
+    { "matchDepNames": ["node"], "allowedVersions": "<25", "description": "Node 24 LTS" },
+    { "matchPackageNames": ["@types/node"], "allowedVersions": "<25" },
+    { "matchPackageNames": ["prisma", "@prisma/**"], "groupName": "prisma", "ignoreUnstable": true }
+  ]
+}

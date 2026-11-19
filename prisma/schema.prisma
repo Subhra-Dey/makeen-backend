@@ -1,0 +1,1099 @@
+// MAKEEN FM Portal — database schema (PostgreSQL 17+).
+// Columns mirror the field definitions in src/shared/fields (a test asserts they match).
+// Security objects Prisma cannot model (RLS policies, CHECK constraints, triggers, grants) live in
+// prisma/migrations/*_security/migration.sql. See docs/ARCHITECTURE.md §5 and DECISIONS D-08.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────── enums (match src/shared/enums.ts)
+
+enum WorkingStatus {
+  WORKING
+  RESIGNED
+}
+
+enum LoginStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum Module {
+  DASHBOARD
+  DAILY_MIS
+  MONTHLY_MIS
+  DAILY_EXCEPTIONS
+  MANAGEMENT_REVIEW
+  PLANT_MASTER
+  AUDIT
+  LICENCES
+  REVIEW_CHECK
+  GRAPHS
+  PEOPLE
+  NOTIFICATION_CONTROL
+}
+
+enum ModuleSetting {
+  SEARCH
+  SUBMIT
+  DOWNLOAD
+  APPROVE
+  HIDDEN
+}
+
+enum Action {
+  RETURN
+  DELETE_PLANT
+  REOPEN_APPROVED
+  REPLACE_FILE_AFTER_APPROVE
+  READ_FILE_INTO_FIELDS
+}
+
+enum OtpChannel {
+  SMS
+  EMAIL
+}
+
+enum PlantStatus {
+  NEW
+  WORKING
+}
+
+enum VolumeType {
+  PROJECTED
+  MINIMUM
+}
+
+enum EquipmentType {
+  PUMPS
+  COMPRESSOR
+  FIRE_ENGINE
+  WATER_PUMPS
+  CAPPING_MACHINE
+  VALVE_OPENING_MACHINE
+  REPAIR_MACHINE
+  PURGING_MACHINE
+  PNEUMATIC_TESTING
+  HYDROTESTING
+  PAINTING_BOOTH
+  CYLINDER_RETESTING
+  CCTV_CAMERAS
+  CHAIN_CONVEYOR
+}
+
+enum ReportStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  RETURNED
+}
+
+enum YesNo {
+  YES
+  NO
+}
+
+enum PlantOperatingStatus {
+  OPERATIONAL
+  NON_OPERATIONAL
+}
+
+enum ExceptionStatus {
+  PARTIAL
+  PENDING
+  COMPLETED
+}
+
+enum CylinderSize {
+  KG5
+  KG14_2
+  KG19
+  KG35_A
+  KG47_5
+  KG35_B
+  KG425
+}
+
+enum CylinderStatCategory {
+  DUE_TESTING
+  TESTED_DESPATCHED
+  CLOSING_DUE_TESTING
+  CLOSING_HOT_REPAIR
+  CLOSING_SCRAP
+}
+
+enum InventoryItem {
+  SCRAP_SC_VALVE
+  SCRAP_REGULATOR
+  NEW_SC_VALVE
+  NEW_REGULATOR
+  NEW_O_RINGS
+  NEW_TE_SEALS
+  NEW_SAFETY_CAPS
+  NEW_NYLON_THREAD
+  NEW_SS_CLIP
+  NEW_TEFLON_TAPE
+  DPT_ZINC_CHROMATE_PRIMER
+  DPT_SIGNAL_RED
+  DPT_OXFORD_BLUE
+  DPT_WHITE
+  DPT_YELLOW
+  DPT_BLACK
+  DPT_STENCIL
+}
+
+enum AuditType {
+  ISA
+  OISD
+  MEIPL
+}
+
+enum AuditFrequency {
+  MONTHS_3
+  MONTHS_12
+  YEARS_5
+}
+
+enum ObservationStatus {
+  PENDING
+  COMPLIED
+}
+
+enum LicenceCategory {
+  STATUTORY
+  INTERNAL
+}
+
+enum LicenceType {
+  STATUTORY
+  SAFETY_CALIBRATION
+  ELECTRICAL_CALIBRATION
+  MAINTENANCE_CALIBRATION
+}
+
+enum RenewalFrequency {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+  NA
+}
+
+enum NotificationCategory {
+  SYSTEM
+  CUSTOM
+  PERSON
+}
+
+enum NotificationEvent {
+  REPORT_SUBMITTED
+  EXCEPTION_RAISED
+  REPORT_DECIDED
+  LICENCE_DUE
+  AUDIT_OVERDUE
+  ACCESS_CHANGED
+  PASSWORD_OTP
+  PERSON_NOTE
+}
+
+enum SendChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum SendState {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+}
+
+enum AttachmentOwner {
+  DAILY_EXCEPTION
+  AUDIT
+  LICENCE
+  PLANT_CONTRACT
+  PLANT_ACTIVITY
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  SKIPPED
+}
+
+enum KekaImportSource {
+  CSV
+  API
+}
+
+// ─────────────────────────────────────────────── people & access
+
+/// A KEKA employee. KEKA-owned fields (name, code, email, phone, Aadhaar, designation, photo)
+/// are only ever written by the KEKA import — never by a portal screen (GEN-6).
+model User {
+  id              String        @id @default(uuid(7)) @db.Uuid
+  employeeCode    String        @unique @map("employee_code") @db.VarChar(32)
+  name            String        @db.VarChar(160)
+  email           String        @unique @db.Citext
+  /// KEKA mobile, used only for OTP. Masked in every API response.
+  phone           String?       @db.VarChar(20)
+  /// AES-256-GCM: iv(12) | tag(16) | ciphertext. Only the masked last 4 ever leave the API.
+  aadhaarEnc      Bytes?        @map("aadhaar_enc")
+  aadhaarKeyId    String?       @map("aadhaar_key_id") @db.VarChar(32)
+  aadhaarLast4    String?       @map("aadhaar_last4") @db.Char(4)
+  designation     String        @db.Citext
+  photoUrl        String?       @map("photo_url") @db.VarChar(500)
+  workingStatus   WorkingStatus @default(WORKING) @map("working_status")
+  loginStatus     LoginStatus   @default(INACTIVE) @map("login_status")
+  passwordHash    String?       @map("password_hash") @db.VarChar(255)
+  mustSetPassword Boolean       @default(true) @map("must_set_password")
+  /// Bumped on deactivate / password reset / role or plant change → old access tokens die (SEC-4).
+  tokenVersion    Int           @default(0) @map("token_version")
+  lastLoginAt     DateTime?     @map("last_login_at") @db.Timestamptz(3)
+  /// Base role for non-plant screens and people with no plant (D-11).
+  baseRoleId      String?       @map("base_role_id") @db.Uuid
+  kekaSyncedAt    DateTime?     @map("keka_synced_at") @db.Timestamptz(3)
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  baseRole              Role?                   @relation("UserBaseRole", fields: [baseRoleId], references: [id], onDelete: SetNull)
+  assignments           PlantAssignment[]       @relation("AssignmentUser")
+  assignmentsMade       PlantAssignment[]       @relation("AssignmentBy")
+  sessions              Session[]
+  otpChallenges         OtpChallenge[]
+  managedPlants         Plant[]                 @relation("PlantManager")
+  notificationsReceived NotificationRecipient[]
+  licenceReminders      LicenceRemindUser[]
+  rolesUpdated          Role[]                  @relation("RoleUpdatedBy")
+
+  @@index([loginStatus, workingStatus])
+  @@index([designation])
+  @@map("users")
+}
+
+model Role {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  name         String   @unique @db.Citext
+  /// One of the 14 go-live roles (can be reset to its default).
+  isStandard   Boolean  @default(false) @map("is_standard")
+  /// System Admin role: every capability on every module (cannot be locked out).
+  isAdmin      Boolean  @default(false) @map("is_admin")
+  copiedFromId String?  @map("copied_from_id") @db.Uuid
+  /// Optimistic lock for Role screen saves (ROLE-8).
+  version      Int      @default(0)
+  /// Admin who last saved the role's access (shown with the time — ROLE-8).
+  updatedById  String?  @map("updated_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  updatedBy    User?                  @relation("RoleUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  copiedFrom   Role?                  @relation("RoleCopy", fields: [copiedFromId], references: [id], onDelete: SetNull)
+  copies       Role[]                 @relation("RoleCopy")
+  modules      RoleModulePermission[]
+  actions      RoleActionPermission[]
+  designations DesignationRoleMap[]
+  baseUsers    User[]                 @relation("UserBaseRole")
+  assignments  PlantAssignment[]
+
+  @@map("roles")
+}
+
+model RoleModulePermission {
+  roleId  String        @map("role_id") @db.Uuid
+  module  Module
+  setting ModuleSetting
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, module])
+  @@map("role_module_permissions")
+}
+
+model RoleActionPermission {
+  roleId  String  @map("role_id") @db.Uuid
+  action  Action
+  allowed Boolean @default(false)
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, action])
+  @@map("role_action_permissions")
+}
+
+/// KEKA designation → portal role(s); many-to-many (DSG-2). Unmapped designations cannot sign in.
+model DesignationRoleMap {
+  designation String @db.Citext
+  roleId      String @map("role_id") @db.Uuid
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([designation, roleId])
+  @@map("designation_role_map")
+}
+
+/// Refresh-token session. Tokens are stored hashed; a family is revoked on reuse (SEC-2).
+model Session {
+  id                String    @id @default(uuid(7)) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  familyId          String    @map("family_id") @db.Uuid
+  refreshTokenHash  String    @unique @map("refresh_token_hash") @db.Char(64)
+  /// users.token_version when the session was issued; a bump invalidates the session (SEC-4).
+  tokenVersion      Int       @default(0) @map("token_version")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt        DateTime  @default(now()) @map("last_used_at") @db.Timestamptz(3)
+  idleExpiresAt     DateTime  @map("idle_expires_at") @db.Timestamptz(3)
+  absoluteExpiresAt DateTime  @map("absolute_expires_at") @db.Timestamptz(3)
+  rotatedAt         DateTime? @map("rotated_at") @db.Timestamptz(3)
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz(3)
+  revokedReason     String?   @map("revoked_reason") @db.VarChar(40)
+  ip                String?   @db.VarChar(64)
+  userAgent         String?   @map("user_agent") @db.VarChar(400)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("sessions")
+}
+
+model OtpChallenge {
+  id           String     @id @default(uuid(7)) @db.Uuid
+  userId       String     @map("user_id") @db.Uuid
+  channel      OtpChannel
+  /// HMAC-SHA256(code, pepper) — never the code itself.
+  codeHash     String     @map("code_hash") @db.Char(64)
+  /// Masked destination shown to the person, e.g. 98XXXXXX21.
+  sentTo       String     @map("sent_to") @db.VarChar(120)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt    DateTime   @map("expires_at") @db.Timestamptz(3)
+  usedAt       DateTime?  @map("used_at") @db.Timestamptz(3)
+  supersededAt DateTime?  @map("superseded_at") @db.Timestamptz(3)
+  attempts     Int        @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("otp_challenges")
+}
+
+// ─────────────────────────────────────────────── plants
+
+model Plant {
+  id                 String      @id @default(uuid(7)) @db.Uuid
+  name               String      @unique @db.Citext
+  address            String      @db.VarChar(400)
+  code               String      @unique @db.Citext
+  /// Shown after create, e.g. PK-7F3A21 (D-35).
+  plantKey           String      @unique @map("plant_key") @db.VarChar(16)
+  managerId          String      @map("manager_id") @db.Uuid
+  contractDate       DateTime    @map("contract_date") @db.Date
+  periodYears        Int         @map("period_years")
+  /// Stored only; never added to the end date (PLT-C8 / D-15).
+  extensionYears     Int?        @map("extension_years")
+  /// = contract date (CHECK).
+  startDate          DateTime    @map("start_date") @db.Date
+  /// = contract date + period − 1 day (CHECK, D-15).
+  endDate            DateTime    @map("end_date") @db.Date
+  status             PlantStatus @default(NEW)
+  readFileIntoFields Boolean     @default(false) @map("read_file_into_fields")
+  createdById        String?     @map("created_by_id") @db.Uuid
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// Soft delete — only via the DELETE_PLANT action, with a reason and an audit row.
+  deletedAt          DateTime?   @map("deleted_at") @db.Timestamptz(3)
+  deletedById        String?     @map("deleted_by_id") @db.Uuid
+  deleteReason       String?     @map("delete_reason") @db.VarChar(500)
+
+  manager         User              @relation("PlantManager", fields: [managerId], references: [id])
+  assignments     PlantAssignment[]
+  details         PlantDetail?
+  equipment       PlantEquipment[]
+  volumes         PlantYearVolume[]
+  activities      PlantActivity[]
+  dailyMis        DailyMis[]
+  monthlyMis      MonthlyMis[]
+  dailyExceptions DailyException[]
+  lapseNotes      LapseNote[]
+  audits          Audit[]
+  licences        Licence[]
+
+  @@index([status])
+  @@map("plants")
+}
+
+/// Who may work on which plant, and with which role on that plant (D-11).
+model PlantAssignment {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  plantId      String   @map("plant_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  assignedById String?  @map("assigned_by_id") @db.Uuid
+  remarks      String?  @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user       User  @relation("AssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("AssignmentBy", fields: [assignedById], references: [id], onDelete: SetNull)
+  plant      Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  role       Role  @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, plantId])
+  @@index([plantId])
+  @@map("plant_assignments")
+}
+
+model PlantDetail {
+  plantId     String   @id @map("plant_id") @db.Uuid
+  /// Capacity (MTPA).
+  capacity    Decimal? @db.Decimal(14, 3)
+  /// Production (MT).
+  production  Decimal? @db.Decimal(14, 3)
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@map("plant_details")
+}
+
+/// Plant details fields 5–18: one row per equipment type.
+model PlantEquipment {
+  plantId   String        @map("plant_id") @db.Uuid
+  equipment EquipmentType
+  quantity  Int           @default(0)
+  note      String?       @db.VarChar(300)
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@id([plantId, equipment])
+  @@map("plant_equipment")
+}
+
+model PlantYearVolume {
+  id       String     @id @default(uuid(7)) @db.Uuid
+  plantId  String     @map("plant_id") @db.Uuid
+  type     VolumeType
+  /// Indian FY label, e.g. 2026-27.
+  fy       String     @db.Char(7)
+  volumeMt Decimal    @map("volume_mt") @db.Decimal(14, 3)
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@unique([plantId, type, fy])
+  @@map("plant_year_volumes")
+}
+
+model PlantActivity {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  plantId     String   @map("plant_id") @db.Uuid
+  heading     String   @db.VarChar(200)
+  description String?  @db.Text
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@index([plantId])
+  @@map("plant_activities")
+}
+
+// ─────────────────────────────────────────────── Daily MIS (60 fields)
+
+/// One plant + one calendar date. Extra Drafts are allowed; at most ONE non-Draft row per
+/// plant + date (partial unique index — BEV-3). System sums are enforced by CHECK constraints.
+model DailyMis {
+  id                     String       @id @default(uuid(7)) @db.Uuid
+  // 1–8 header
+  plantId                String       @map("plant_id") @db.Uuid
+  reportDate             DateTime     @map("report_date") @db.Date
+  status                 ReportStatus @default(DRAFT)
+  shiftsOperated         Int?         @map("shifts_operated") @db.SmallInt
+  otHours                Decimal?     @map("ot_hours") @db.Decimal(6, 2)
+  enteredById            String       @map("entered_by_id") @db.Uuid
+  // 9–20 stock, receipt, despatch, filling (MT unless count)
+  openingStock           Decimal?     @map("opening_stock") @db.Decimal(14, 3)
+  bulkReceipts           Decimal?     @map("bulk_receipts") @db.Decimal(14, 3)
+  normalCylinderDespatch Decimal?     @map("normal_cylinder_despatch") @db.Decimal(14, 3)
+  normalTtLoading        Decimal?     @map("normal_tt_loading") @db.Decimal(14, 3)
+  otCylinderDespatch     Decimal?     @map("ot_cylinder_despatch") @db.Decimal(14, 3)
+  otTtLoading            Decimal?     @map("ot_tt_loading") @db.Decimal(14, 3)
+  cylFilled142           Int?         @map("cyl_filled_14_2")
+  cylFilled19            Int?         @map("cyl_filled_19")
+  prcnReturn             Decimal?     @map("prcn_return") @db.Decimal(14, 3)
+  closingBookStock       Decimal?     @map("closing_book_stock") @db.Decimal(14, 3)
+  physicalStock          Decimal?     @map("physical_stock") @db.Decimal(14, 3)
+  stockGainLoss          Decimal?     @map("stock_gain_loss") @db.Decimal(14, 3)
+  // 21–36 production time loss (minutes)
+  lossCarousel           Int?         @map("loss_carousel")
+  lossEld                Int?         @map("loss_eld")
+  lossOld                Int?         @map("loss_old")
+  lossConveyor           Int?         @map("loss_conveyor")
+  lossUpDownStream       Int?         @map("loss_up_down_stream")
+  lossUtility            Int?         @map("loss_utility")
+  lossMechanicalTotal    Int          @default(0) @map("loss_mechanical_total")
+  lossPowerEb            Int?         @map("loss_power_eb")
+  lossMotorCable         Int?         @map("loss_motor_cable")
+  lossAutomation         Int?         @map("loss_automation")
+  lossElectricalTotal    Int          @default(0) @map("loss_electrical_total")
+  lossIndentTruck        Int?         @map("loss_indent_truck")
+  lossFireDrill          Int?         @map("loss_fire_drill")
+  lossTraining           Int?         @map("loss_training")
+  lossManpower           Int?         @map("loss_manpower")
+  lossMiscTotal          Int          @default(0) @map("loss_misc_total")
+  // 37–44 indents & accuracy
+  indentsStatus          Int?         @map("indents_status")
+  pendingIndentReason    String?      @map("pending_indent_reason") @db.VarChar(500)
+  accuracyZero           Decimal?     @map("accuracy_zero") @db.Decimal(5, 2)
+  accuracy50             Decimal?     @map("accuracy_50") @db.Decimal(5, 2)
+  accuracy100            Decimal?     @map("accuracy_100") @db.Decimal(5, 2)
+  accuracyBeyond100      Decimal?     @map("accuracy_beyond_100") @db.Decimal(5, 2)
+  eldTestedPct           Decimal?     @map("eld_tested_pct") @db.Decimal(5, 2)
+  oldTestedPct           Decimal?     @map("old_tested_pct") @db.Decimal(5, 2)
+  // 45–52 market return (cylinders)
+  mrPinLeak              Int?         @map("mr_pin_leak")
+  mrPinCut               Int?         @map("mr_pin_cut")
+  mrBodyLeak             Int?         @map("mr_body_leak")
+  mrBungLeak             Int?         @map("mr_bung_leak")
+  mrDptHr                Int?         @map("mr_dpt_hr")
+  mrWeight               Int?         @map("mr_weight")
+  mrOther                Int?         @map("mr_other")
+  mrTotal                Int          @default(0) @map("mr_total")
+  // 53–60 SQC & notes
+  sqcDefective           Int?         @map("sqc_defective")
+  testBathBodyLeak       Int?         @map("test_bath_body_leak")
+  testBathBungLeak       Int?         @map("test_bath_bung_leak")
+  sqcTime                String?      @map("sqc_time") @db.Char(5)
+  sqcRemarks             String?      @map("sqc_remarks") @db.VarChar(1000)
+  meetings               String?      @db.VarChar(1000)
+  licenceRenewal         String?      @map("licence_renewal") @db.VarChar(1000)
+  remarks                String?      @db.VarChar(2000)
+  // workflow
+  lastModifiedById       String?      @map("last_modified_by_id") @db.Uuid
+  submittedAt            DateTime?    @map("submitted_at") @db.Timestamptz(3)
+  approvedById           String?      @map("approved_by_id") @db.Uuid
+  approvedAt             DateTime?    @map("approved_at") @db.Timestamptz(3)
+  returnedById           String?      @map("returned_by_id") @db.Uuid
+  returnedAt             DateTime?    @map("returned_at") @db.Timestamptz(3)
+  returnReason           String?      @map("return_reason") @db.VarChar(1000)
+  reopenedById           String?      @map("reopened_by_id") @db.Uuid
+  reopenedAt             DateTime?    @map("reopened_at") @db.Timestamptz(3)
+  reopenReason           String?      @map("reopen_reason") @db.VarChar(1000)
+  /// Optimistic locking.
+  version                Int          @default(1)
+  /// First save — waiting hours start here (D-30).
+  createdAt              DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plant     Plant              @relation(fields: [plantId], references: [id])
+  revisions DailyMisRevision[]
+
+  @@unique([plantId, reportDate], map: "daily_mis_one_non_draft_per_plant_date", where: raw("status <> 'DRAFT'"))
+  @@index([plantId, reportDate])
+  @@index([status, createdAt])
+  @@map("daily_mis")
+}
+
+/// Snapshot on every save — every re-save is time-stamped (DMIS-R6).
+model DailyMisRevision {
+  id         String       @id @default(uuid(7)) @db.Uuid
+  dailyMisId String       @map("daily_mis_id") @db.Uuid
+  plantId    String       @map("plant_id") @db.Uuid
+  version    Int
+  status     ReportStatus
+  snapshot   Json
+  savedById  String       @map("saved_by_id") @db.Uuid
+  savedAt    DateTime     @default(now()) @map("saved_at") @db.Timestamptz(3)
+
+  dailyMis DailyMis @relation(fields: [dailyMisId], references: [id], onDelete: Cascade)
+
+  @@unique([dailyMisId, version])
+  @@map("daily_mis_revisions")
+}
+
+// ─────────────────────────────────────────────── Monthly MIS (122 items)
+
+/// One plant + one calendar month (`month` = 1st of month). Items 1–25 are computed from
+/// Approved Daily MIS and snapshotted at approval; 26–69 and 122 are columns; 70–121 child rows.
+model MonthlyMis {
+  id                      String       @id @default(uuid(7)) @db.Uuid
+  plantId                 String       @map("plant_id") @db.Uuid
+  month                   DateTime     @db.Date
+  status                  ReportStatus @default(DRAFT)
+  enteredById             String       @map("entered_by_id") @db.Uuid
+  // 26–34 energy & diesel
+  ebUnits                 Decimal?     @map("eb_units") @db.Decimal(14, 2)
+  dgUnits                 Decimal?     @map("dg_units") @db.Decimal(14, 2)
+  energyCharges           Decimal?     @map("energy_charges") @db.Decimal(14, 2)
+  electricityBill         Decimal?     @map("electricity_bill") @db.Decimal(14, 2)
+  dieselBill              Decimal?     @map("diesel_bill") @db.Decimal(14, 2)
+  dieselDg                Decimal?     @map("diesel_dg") @db.Decimal(14, 2)
+  dieselFireEngine        Decimal?     @map("diesel_fire_engine") @db.Decimal(14, 2)
+  hoursDg                 Decimal?     @map("hours_dg") @db.Decimal(8, 2)
+  hoursFireEngine         Decimal?     @map("hours_fire_engine") @db.Decimal(8, 2)
+  // 35–43 revenue, cost, penalties
+  bottlingRevenue         Decimal?     @map("bottling_revenue") @db.Decimal(14, 2)
+  bottlingExpenditure     Decimal?     @map("bottling_expenditure") @db.Decimal(14, 2)
+  retestingRevenue        Decimal?     @map("retesting_revenue") @db.Decimal(14, 2)
+  retestingExpenditure    Decimal?     @map("retesting_expenditure") @db.Decimal(14, 2)
+  opexPerCylinder         Decimal?     @map("opex_per_cylinder") @db.Decimal(14, 2)
+  operatingCostPerMt      Decimal?     @map("operating_cost_per_mt") @db.Decimal(14, 2)
+  tenderCostPerMt         Decimal?     @map("tender_cost_per_mt") @db.Decimal(14, 2)
+  penaltyIncurred         YesNo?       @map("penalty_incurred")
+  penaltyDetails          String?      @map("penalty_details") @db.VarChar(1000)
+  // 44–54 training, power, solar
+  trainingStaff           Int?         @map("training_staff")
+  trainingWorkmen         Int?         @map("training_workmen")
+  trainingDrivers         Int?         @map("training_drivers")
+  trainingTotal           Int          @default(0) @map("training_total")
+  unitsPerMt              Decimal?     @map("units_per_mt") @db.Decimal(14, 2)
+  powerFactor             Decimal?     @map("power_factor") @db.Decimal(4, 3)
+  contractDemandKva       Decimal?     @map("contract_demand_kva") @db.Decimal(14, 2)
+  maxDemandKva            Decimal?     @map("max_demand_kva") @db.Decimal(14, 2)
+  solarAvailable          YesNo?       @map("solar_available")
+  solarCapacity           String?      @map("solar_capacity") @db.VarChar(100)
+  solarUnits              Decimal?     @map("solar_units") @db.Decimal(14, 2)
+  // 55–69 spares, cycle counts, paints
+  capsUsedPct             Decimal?     @map("caps_used_pct") @db.Decimal(5, 2)
+  sealsUsedPct            Decimal?     @map("seals_used_pct") @db.Decimal(5, 2)
+  oRingsReplacedPct       Decimal?     @map("o_rings_replaced_pct") @db.Decimal(5, 2)
+  valvesReplacedPct       Decimal?     @map("valves_replaced_pct") @db.Decimal(5, 2)
+  brownSoapKg             Decimal?     @map("brown_soap_kg") @db.Decimal(14, 2)
+  teflonTape              Decimal?     @map("teflon_tape") @db.Decimal(14, 2)
+  defectiveMarketReturn   Int?         @map("defective_market_return")
+  cvrCycleCountDate       DateTime?    @map("cvr_cycle_count_date") @db.Date
+  cvrCycleDeviation       YesNo?       @map("cvr_cycle_deviation")
+  warehouseCycleCountDate DateTime?    @map("warehouse_cycle_count_date") @db.Date
+  warehouseCycleDeviation YesNo?       @map("warehouse_cycle_deviation")
+  paintSignalRed          Decimal?     @map("paint_signal_red") @db.Decimal(14, 2)
+  paintPrimer             Decimal?     @map("paint_primer") @db.Decimal(14, 2)
+  paintStencil            Decimal?     @map("paint_stencil") @db.Decimal(14, 2)
+  thinner                 Decimal?     @db.Decimal(14, 2)
+  // 122
+  remarks                 String?      @db.VarChar(2000)
+  /// Items 1–25 frozen at approval (MMIS-R4); null while not approved (computed live).
+  summarySnapshot         Json?        @map("summary_snapshot")
+  // workflow
+  lastModifiedById        String?      @map("last_modified_by_id") @db.Uuid
+  submittedAt             DateTime?    @map("submitted_at") @db.Timestamptz(3)
+  approvedById            String?      @map("approved_by_id") @db.Uuid
+  approvedAt              DateTime?    @map("approved_at") @db.Timestamptz(3)
+  returnedById            String?      @map("returned_by_id") @db.Uuid
+  returnedAt              DateTime?    @map("returned_at") @db.Timestamptz(3)
+  returnReason            String?      @map("return_reason") @db.VarChar(1000)
+  reopenedById            String?      @map("reopened_by_id") @db.Uuid
+  reopenedAt              DateTime?    @map("reopened_at") @db.Timestamptz(3)
+  reopenReason            String?      @map("reopen_reason") @db.VarChar(1000)
+  version                 Int          @default(1)
+  createdAt               DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt               DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plant          Plant                  @relation(fields: [plantId], references: [id])
+  cylinderStats  MonthlyCylinderStat[]
+  inventoryItems MonthlyInventoryItem[]
+
+  @@unique([plantId, month])
+  @@index([status, createdAt])
+  @@map("monthly_mis")
+}
+
+/// Items 70–104: category × size, with two separate 35 kg sizes (KG35_A, KG35_B).
+model MonthlyCylinderStat {
+  monthlyMisId String               @map("monthly_mis_id") @db.Uuid
+  category     CylinderStatCategory
+  size         CylinderSize
+  quantity     Int
+
+  monthlyMis MonthlyMis @relation(fields: [monthlyMisId], references: [id], onDelete: Cascade)
+
+  @@id([monthlyMisId, category, size])
+  @@map("monthly_cylinder_stats")
+}
+
+/// Items 105–121.
+model MonthlyInventoryItem {
+  monthlyMisId String        @map("monthly_mis_id") @db.Uuid
+  item         InventoryItem
+  quantity     Decimal       @db.Decimal(14, 2)
+
+  monthlyMis MonthlyMis @relation(fields: [monthlyMisId], references: [id], onDelete: Cascade)
+
+  @@id([monthlyMisId, item])
+  @@map("monthly_inventory_items")
+}
+
+// ─────────────────────────────────────────────── Daily Exceptions
+
+/// One plant + one calendar date. No approve lock. "Not initiated" is derived, never stored.
+model DailyException {
+  id                 String                @id @default(uuid(7)) @db.Uuid
+  plantId            String                @map("plant_id") @db.Uuid
+  reportDate         DateTime              @map("report_date") @db.Date
+  plantStatus        PlantOperatingStatus? @map("plant_status")
+  status             ExceptionStatus       @default(PARTIAL)
+  /// First Yes-line remark or the incident remark (derived on save, D-22).
+  problemHighlight   String?               @map("problem_highlight") @db.VarChar(500)
+  readFileIntoFields Boolean               @default(false) @map("read_file_into_fields")
+  enteredById        String                @map("entered_by_id") @db.Uuid
+  lastModifiedById   String?               @map("last_modified_by_id") @db.Uuid
+  version            Int                   @default(1)
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plant      Plant                @relation(fields: [plantId], references: [id])
+  lines      DailyExceptionLine[]
+  exceptions FormException[]
+
+  @@unique([plantId, reportDate])
+  @@index([status, reportDate])
+  @@map("daily_exceptions")
+}
+
+/// The Daily Exception form. Checks and their extra inputs are fields of this form.
+model ExceptionForm {
+  id     Int     @id @default(autoincrement())
+  code   String  @unique @db.VarChar(40)
+  name   String  @db.VarChar(120)
+  active Boolean @default(true)
+
+  fields ExceptionFormField[]
+
+  @@map("exception_forms")
+}
+
+/// One input on the form. A Yes on a check (`raises_exception`) becomes an exception.
+model ExceptionFormField {
+  id              Int     @id @default(autoincrement())
+  formId          Int     @map("form_id")
+  /// Answer group. Child inputs share the check's line number.
+  lineNo          Int     @map("line_no") @db.SmallInt
+  /// Spec field number shown on the form.
+  fieldNo         Int     @map("field_no") @db.SmallInt
+  fieldKey        String  @map("field_key") @db.VarChar(40)
+  /// Key stored inside the line's details. Empty on the Yes / No check itself.
+  valueKey        String? @map("value_key") @db.VarChar(40)
+  label           String  @db.VarChar(500)
+  kind            String  @db.VarChar(16)
+  parentKey       String? @map("parent_key") @db.VarChar(40)
+  raisesException Boolean @default(false) @map("raises_exception")
+  incident        Boolean @default(false)
+  unit            String? @db.VarChar(40)
+  decimals        Int?    @db.SmallInt
+  options         Json?
+  minTanks        Int?    @map("min_tanks") @db.SmallInt
+  sortOrder       Int     @map("sort_order")
+
+  form ExceptionForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  @@unique([formId, fieldKey])
+  @@map("exception_form_fields")
+}
+
+/// A problem taken from a filled form. Replaced whenever that form is saved.
+model FormException {
+  dailyExceptionId String @map("daily_exception_id") @db.Uuid
+  fieldKey         String @map("field_key") @db.VarChar(40)
+  lineNo           Int    @map("line_no") @db.SmallInt
+  summary          String @db.VarChar(500)
+
+  report DailyException @relation(fields: [dailyExceptionId], references: [id], onDelete: Cascade)
+
+  @@id([dailyExceptionId, fieldKey])
+  @@map("form_exceptions")
+}
+
+/// Saved answers for one check on the form. `details` holds that check's extra inputs.
+model DailyExceptionLine {
+  exceptionId String @map("exception_id") @db.Uuid
+  lineNo      Int    @map("line_no") @db.SmallInt
+  answer      YesNo?
+  details     Json   @default("{}")
+
+  exception DailyException @relation(fields: [exceptionId], references: [id], onDelete: Cascade)
+
+  @@id([exceptionId, lineNo])
+  @@map("daily_exception_lines")
+}
+
+/// Optional short plant note explaining why a day was missed (DEX-S7). Lapse itself is derived.
+model LapseNote {
+  plantId     String   @map("plant_id") @db.Uuid
+  date        DateTime @db.Date
+  note        String   @db.VarChar(300)
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@id([plantId, date])
+  @@map("lapse_notes")
+}
+
+// ─────────────────────────────────────────────── Audit
+
+model Audit {
+  id                   String         @id @default(uuid(7)) @db.Uuid
+  plantId              String         @map("plant_id") @db.Uuid
+  auditType            AuditType      @map("audit_type")
+  frequency            AuditFrequency
+  /// Indian FY label, e.g. 2026-27.
+  fy                   String         @db.Char(7)
+  totalRecommendations Int            @map("total_recommendations")
+  startDate            DateTime       @map("start_date") @db.Date
+  endDate              DateTime       @map("end_date") @db.Date
+  readFileIntoFields   Boolean        @default(false) @map("read_file_into_fields")
+  createdById          String         @map("created_by_id") @db.Uuid
+  version              Int            @default(1)
+  createdAt            DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plant        Plant              @relation(fields: [plantId], references: [id])
+  observations AuditObservation[]
+
+  @@index([plantId, fy])
+  @@map("audits")
+}
+
+/// Display status (Overdue / Due in 7 days / Pending / Complied) is derived from the dates.
+model AuditObservation {
+  id                String            @id @default(uuid(7)) @db.Uuid
+  auditId           String            @map("audit_id") @db.Uuid
+  plantId           String            @map("plant_id") @db.Uuid
+  /// Shown by the system after save, e.g. OB-0142.
+  observationCode   String            @unique @map("observation_code") @db.VarChar(20)
+  subGroupCode      String?           @map("sub_group_code") @db.VarChar(40)
+  checklistRef      String?           @map("checklist_ref") @db.VarChar(80)
+  particular        String?           @db.VarChar(500)
+  observation       String?           @db.VarChar(2000)
+  recommendation    String?           @db.VarChar(2000)
+  actionPlan        String?           @map("action_plan") @db.VarChar(2000)
+  targetDate        DateTime?         @map("target_date") @db.Date
+  revisedTargetDate DateTime?         @map("revised_target_date") @db.Date
+  status            ObservationStatus @default(PENDING)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  audit Audit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId])
+  @@index([plantId, status])
+  @@map("audit_observations")
+}
+
+// ─────────────────────────────────────────────── Licences
+
+/// Title / item master per licence type (D-26).
+model LicenceItem {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  licenceType LicenceType @map("licence_type")
+  title       String      @db.VarChar(200)
+
+  licences Licence[]
+
+  @@unique([licenceType, title])
+  @@map("licence_items")
+}
+
+/// Status (NA / Not yet initiated / Expired / Due / Active) is derived, never stored (LIC-S1).
+model Licence {
+  id                 String           @id @default(uuid(7)) @db.Uuid
+  plantId            String           @map("plant_id") @db.Uuid
+  category           LicenceCategory
+  licenceType        LicenceType      @map("licence_type")
+  itemId             String           @map("item_id") @db.Uuid
+  docRef             String?          @map("doc_ref") @db.VarChar(80)
+  notes              String?          @db.VarChar(1000)
+  startDate          DateTime?        @map("start_date") @db.Date
+  endDate            DateTime?        @map("end_date") @db.Date
+  frequency          RenewalFrequency
+  remindBeforeDays   Int              @map("remind_before_days")
+  readFileIntoFields Boolean          @default(false) @map("read_file_into_fields")
+  createdById        String           @map("created_by_id") @db.Uuid
+  version            Int              @default(1)
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  plant       Plant               @relation(fields: [plantId], references: [id])
+  item        LicenceItem         @relation(fields: [itemId], references: [id])
+  remindUsers LicenceRemindUser[]
+
+  @@index([plantId, category])
+  @@index([endDate])
+  @@map("licences")
+}
+
+model LicenceRemindUser {
+  licenceId String @map("licence_id") @db.Uuid
+  userId    String @map("user_id") @db.Uuid
+  plantId   String @map("plant_id") @db.Uuid
+
+  licence Licence @relation(fields: [licenceId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([licenceId, userId])
+  @@map("licence_remind_users")
+}
+
+// ─────────────────────────────────────────────── files
+
+/// A file belongs to its record (no file library). Stored privately; streamed via an authorised
+/// endpoint only.
+model Attachment {
+  id           String          @id @default(uuid(7)) @db.Uuid
+  ownerType    AttachmentOwner @map("owner_type")
+  ownerId      String          @map("owner_id") @db.Uuid
+  plantId      String          @map("plant_id") @db.Uuid
+  /// Random object key in the private bucket.
+  storageKey   String          @unique @map("storage_key") @db.VarChar(200)
+  fileName     String          @map("file_name") @db.VarChar(255)
+  mimeType     String          @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int             @map("size_bytes")
+  sha256       String          @db.Char(64)
+  scanStatus   ScanStatus      @default(PENDING) @map("scan_status")
+  uploadedById String          @map("uploaded_by_id") @db.Uuid
+  uploadedAt   DateTime        @default(now()) @map("uploaded_at") @db.Timestamptz(3)
+  replacedAt   DateTime?       @map("replaced_at") @db.Timestamptz(3)
+  replacedById String?         @map("replaced_by_id") @db.Uuid
+
+  @@index([ownerType, ownerId])
+  @@index([plantId])
+  @@map("attachments")
+}
+
+// ─────────────────────────────────────────────── notifications
+
+model Notification {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  category       NotificationCategory
+  event          NotificationEvent?
+  /// Free label for custom notices, e.g. "Safety".
+  customCategory String?              @map("custom_category") @db.VarChar(60)
+  title          String               @db.VarChar(200)
+  body           String               @db.Text
+  senderId       String?              @map("sender_id") @db.Uuid
+  /// Deep link to the exact row (NOTIF-2).
+  linkEntity     String?              @map("link_entity") @db.VarChar(40)
+  linkId         String?              @map("link_id") @db.Uuid
+  plantId        String?              @map("plant_id") @db.Uuid
+  canAcknowledge Boolean              @default(false) @map("can_acknowledge")
+  canReply       Boolean              @default(false) @map("can_reply")
+  /// Idempotency key for scheduled notices (e.g. licence-due:<id>:<date>) — NOTIF-J1.
+  dedupeKey      String?              @unique @map("dedupe_key") @db.VarChar(200)
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  recipients NotificationRecipient[]
+  sendLogs   NotificationSendLog[]
+
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model NotificationRecipient {
+  notificationId String    @map("notification_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  readAt         DateTime? @map("read_at") @db.Timestamptz(3)
+  acknowledgedAt DateTime? @map("acknowledged_at") @db.Timestamptz(3)
+  reply          String?   @db.VarChar(2000)
+  repliedAt      DateTime? @map("replied_at") @db.Timestamptz(3)
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([notificationId, userId])
+  @@index([userId, readAt])
+  @@map("notification_recipients")
+}
+
+/// Admin › Notification control: on/off and Email switch per event (NOTIF-C1/C2).
+model NotificationEventConfig {
+  event        NotificationEvent @id
+  enabled      Boolean           @default(true)
+  emailEnabled Boolean           @default(false) @map("email_enabled")
+  updatedById  String?           @map("updated_by_id") @db.Uuid
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("notification_event_config")
+}
+
+/// “Last sends” log (NOTIF-C3).
+model NotificationSendLog {
+  id             String               @id @default(uuid(7)) @db.Uuid
+  notificationId String?              @map("notification_id") @db.Uuid
+  at             DateTime             @default(now()) @db.Timestamptz(3)
+  category       NotificationCategory
+  title          String               @db.VarChar(200)
+  sentTo         String               @map("sent_to") @db.VarChar(300)
+  recipientCount Int                  @default(0) @map("recipient_count")
+  channel        SendChannel
+  state          SendState
+  error          String?              @db.VarChar(500)
+
+  notification Notification? @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+
+  @@index([at])
+  @@index([state, at], map: "notification_send_log_state_at_idx")
+  @@map("notification_send_log")
+}
+
+// ─────────────────────────────────────────────── audit trail & admin
+
+/// Append-only activity log. A trigger blocks UPDATE / DELETE / TRUNCATE (SEC-20).
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  at        DateTime @default(now()) @db.Timestamptz(3)
+  actorId   String?  @map("actor_id") @db.Uuid
+  actorRole String?  @map("actor_role") @db.VarChar(80)
+  ip        String?  @db.VarChar(64)
+  userAgent String?  @map("user_agent") @db.VarChar(400)
+  requestId String?  @map("request_id") @db.VarChar(64)
+  action    String   @db.VarChar(40)
+  entity    String   @db.VarChar(40)
+  entityId  String?  @map("entity_id") @db.VarChar(64)
+  plantId   String?  @map("plant_id") @db.Uuid
+  before    Json?
+  after     Json?
+  reason    String?  @db.VarChar(1000)
+
+  @@index([at])
+  @@index([entity, entityId])
+  @@index([actorId, at])
+  @@map("audit_log")
+}
+
+model KekaImportBatch {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  source      KekaImportSource
+  fileName    String?          @map("file_name") @db.VarChar(255)
+  dryRun      Boolean          @map("dry_run")
+  startedById String           @map("started_by_id") @db.Uuid
+  startedAt   DateTime         @default(now()) @map("started_at") @db.Timestamptz(3)
+  finishedAt  DateTime?        @map("finished_at") @db.Timestamptz(3)
+  totalRows   Int              @default(0) @map("total_rows")
+  created     Int              @default(0)
+  updated     Int              @default(0)
+  unchanged   Int              @default(0)
+  failed      Int              @default(0)
+  report      Json?
+
+  @@map("keka_import_batches")
+}
+
+/// Small key/value settings (e.g. GR-4 hours-per-shift switch, MR download layout).
+model AppSetting {
+  key         String   @id @db.VarChar(80)
+  value       Json
+  updatedById String?  @map("updated_by_id") @db.Uuid
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("app_settings")
+}

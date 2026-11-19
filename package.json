@@ -1,0 +1,126 @@
+{
+  "name": "@makeen/api",
+  "version": "0.1.0",
+  "description": "MAKEEN Energy India — Facility Management Portal API (NestJS). Deployed independently of the web app.",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24.11.0"
+  },
+  "scripts": {
+    "keys:generate": "node scripts/generate-keys.mjs",
+    "db:bootstrap": "node scripts/db-bootstrap.mjs",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:reset": "prisma migrate reset --force && prisma db seed",
+    "db:drift": "prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma --script",
+    "postinstall": "prisma generate",
+    "prebuild": "prisma generate",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" prisma.config.ts",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" prisma.config.ts",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "lint": "eslint \"{src,test,prisma}/**/*.ts\"",
+    "lint:fix": "eslint \"{src,test,prisma}/**/*.ts\" --fix",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "test:e2e": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config ./test/jest-e2e.json --runInBand"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "3.1158.0",
+    "@fontsource/inter": "5.3.0",
+    "@nestjs/common": "11.2.9",
+    "@nestjs/config": "4.0.4",
+    "@nestjs/core": "11.2.9",
+    "@nestjs/platform-express": "11.2.9",
+    "@nestjs/swagger": "11.4.8",
+    "@nestjs/throttler": "6.7.1",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "argon2": "0.45.2",
+    "cookie-parser": "1.4.7",
+    "csv-parse": "7.0.3",
+    "date-fns": "4.4.0",
+    "date-fns-tz": "3.2.0",
+    "exceljs": "4.4.0",
+    "helmet": "8.3.0",
+    "ioredis": "6.0.0",
+    "nestjs-pino": "5.3.1",
+    "nestjs-zod": "5.6.0",
+    "nodemailer": "10.5.0",
+    "pdfkit": "0.20.2",
+    "pg": "8.23.1",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@nestjs/cli": "11.0.24",
+    "@nestjs/schematics": "11.1.0",
+    "@nestjs/testing": "11.2.9",
+    "@types/cookie-parser": "1.4.10",
+    "@types/express": "5.0.6",
+    "@types/jest": "30.0.0",
+    "@types/node": "24.19.2",
+    "@types/pdfkit": "0.17.7",
+    "@types/pg": "8.23.1",
+    "@types/supertest": "6.0.3",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-prettier": "5.5.7",
+    "eslint-plugin-security": "4.2.1",
+    "globals": "16.5.0",
+    "jest": "30.5.2",
+    "pino-pretty": "13.2.0",
+    "prettier": "3.10.1",
+    "prisma": "7.10.1",
+    "supertest": "7.3.2",
+    "ts-jest": "29.4.15",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.2"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.1"
+    },
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.(spec|test)\\.ts$",
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
+    },
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
+    "setupFiles": [
+      "<rootDir>/../test/setup-unit-env.ts"
+    ],
+    "collectCoverageFrom": [
+      "**/*.ts",
+      "!main.ts"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}

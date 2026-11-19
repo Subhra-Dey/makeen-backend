@@ -1,0 +1,21 @@
+# dependencies & build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+# Prisma client is generated from prisma/schema.prisma (npm postinstall / prebuild)
+src/generated/
+
+# env & secrets (the template is committed; real values never are)
+.env
+.env.*
+!.env.example
+*.pem
+
+# local dev file store (STORAGE_DRIVER=local)
+var/
+
+# os / editor / logs
+.DS_Store
+Thumbs.db
+*.log
